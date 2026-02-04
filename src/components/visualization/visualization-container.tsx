@@ -1,11 +1,13 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { LineChart } from "./charts/line-chart";
 import { BarChart } from "./charts/bar-chart";
 import { PieChart } from "./charts/pie-chart";
-import { Skeleton } from "@/components/ui/skeleton";
+import { CollectionComparison } from "./collection-comparison";
+import { ChartSkeleton, Skeleton } from "@/components/ui/skeleton";
 import type { CollectionTrend } from "@/lib/firebase/types";
 
 interface Collection {
@@ -30,6 +32,41 @@ export function VisualizationContainer({
   trends,
   loading = false,
 }: VisualizationContainerProps) {
+  const [activeTab, setActiveTab] = useState("overview");
+  const [collectionTrends, setCollectionTrends] = useState<
+    Record<string, { date: string; count: number }[]>
+  >({});
+  const [comparisonLoading, setComparisonLoading] = useState(false);
+
+  // Load trends for comparison when the comparison tab is activated
+  useEffect(() => {
+    if (activeTab === "comparison" && Object.keys(collectionTrends).length === 0 && collections.length > 1) {
+      setComparisonLoading(true);
+
+      // Load trends for up to 5 collections
+      const collectionsToLoad = collections.slice(0, 5);
+      const promises = collectionsToLoad.map((col) =>
+        fetch(`/api/firestore/trends?collection=${encodeURIComponent(col.name)}`)
+          .then((res) => res.json())
+          .then((data) => ({
+            name: col.name,
+            data: data.data || [],
+          }))
+          .catch(() => ({ name: col.name, data: [] }))
+      );
+
+      Promise.all(promises)
+        .then((results) => {
+          const trendsMap: Record<string, { date: string; count: number }[]> = {};
+          results.forEach(({ name, data }) => {
+            trendsMap[name] = data;
+          });
+          setCollectionTrends(trendsMap);
+        })
+        .finally(() => setComparisonLoading(false));
+    }
+  }, [activeTab, collections, collectionTrends]);
+
   // Prepare data for charts
   const pieData = collections.map((col, index) => ({
     name: col.name,
@@ -43,17 +80,21 @@ export function VisualizationContainer({
   }));
 
   // Get line chart data from trends
-  const lineData =
-    trends?.trends?.[0]?.data ||
-    trends?.data ||
-    generateMockLineData();
+  const lineData = trends?.trends?.[0]?.data || trends?.data || [];
 
   return (
-    <Tabs defaultValue="overview" className="w-full">
+    <Tabs
+      defaultValue="overview"
+      className="w-full"
+      onValueChange={setActiveTab}
+    >
       <TabsList>
         <TabsTrigger value="overview">Overview</TabsTrigger>
         <TabsTrigger value="trends">Tendances</TabsTrigger>
         <TabsTrigger value="distribution">Distribution</TabsTrigger>
+        {collections.length >= 2 && (
+          <TabsTrigger value="comparison">Comparaison</TabsTrigger>
+        )}
       </TabsList>
 
       <TabsContent value="overview">
@@ -66,7 +107,7 @@ export function VisualizationContainer({
             </CardHeader>
             <CardContent>
               {loading ? (
-                <Skeleton className="h-[300px] w-full" />
+                <ChartSkeleton height={300} type="bar" />
               ) : (
                 <BarChart
                   data={barData}
@@ -86,7 +127,7 @@ export function VisualizationContainer({
             </CardHeader>
             <CardContent>
               {loading ? (
-                <Skeleton className="h-[300px] w-full" />
+                <ChartSkeleton height={300} type="pie" />
               ) : (
                 <PieChart data={pieData} />
               )}
@@ -98,20 +139,23 @@ export function VisualizationContainer({
       <TabsContent value="trends">
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">
-              Évolution sur 30 jours
-            </CardTitle>
+            <CardTitle className="text-base">Évolution sur 30 jours</CardTitle>
           </CardHeader>
           <CardContent>
             {loading ? (
-              <Skeleton className="h-[400px] w-full" />
-            ) : (
+              <ChartSkeleton height={400} type="line" />
+            ) : lineData.length > 0 ? (
               <LineChart
                 data={lineData}
                 xKey="date"
                 yKey="count"
                 color="#f59e0b"
+                height={400}
               />
+            ) : (
+              <div className="flex items-center justify-center h-[400px] text-muted-foreground bg-muted/20 rounded-lg">
+                Aucune donnée de tendance disponible (champ "createdAt" manquant)
+              </div>
             )}
           </CardContent>
         </Card>
@@ -126,7 +170,7 @@ export function VisualizationContainer({
           </CardHeader>
           <CardContent>
             {loading ? (
-              <Skeleton className="h-[400px] w-full" />
+              <ChartSkeleton height={400} type="pie" />
             ) : (
               <div className="h-[400px]">
                 <PieChart data={pieData} showLegend />
@@ -135,6 +179,27 @@ export function VisualizationContainer({
           </CardContent>
         </Card>
       </TabsContent>
+
+      {collections.length >= 2 && (
+        <TabsContent value="comparison">
+          {comparisonLoading ? (
+            <Card>
+              <CardHeader>
+                <Skeleton className="h-6 w-48" />
+              </CardHeader>
+              <CardContent>
+                <ChartSkeleton height={350} type="line" />
+              </CardContent>
+            </Card>
+          ) : (
+            <CollectionComparison
+              collections={collections}
+              trendsData={collectionTrends}
+              height={350}
+            />
+          )}
+        </TabsContent>
+      )}
     </Tabs>
   );
 }
@@ -155,21 +220,3 @@ function getCollectionColor(index: number): string {
   return colors[index % colors.length];
 }
 
-function generateMockLineData() {
-  const data = [];
-  const now = new Date();
-  let baseValue = 100;
-
-  for (let i = 29; i >= 0; i--) {
-    const date = new Date(now);
-    date.setDate(date.getDate() - i);
-    baseValue = Math.max(50, baseValue + Math.floor(Math.random() * 20) - 8);
-
-    data.push({
-      date: date.toISOString().split("T")[0],
-      count: baseValue,
-    });
-  }
-
-  return data;
-}

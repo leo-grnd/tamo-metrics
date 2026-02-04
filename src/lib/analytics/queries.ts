@@ -163,14 +163,14 @@ export async function getCollectionTrends(
   // Check if collection has createdAt field
   const sampleDoc = await collection.limit(1).get();
   if (sampleDoc.empty) {
-    return generateMockTrendData();
+    return [];
   }
 
   const data = sampleDoc.docs[0].data();
   const hasCreatedAt = "createdAt" in data;
 
   if (!hasCreatedAt) {
-    return generateMockTrendData();
+    return [];
   }
 
   // Get actual trend data
@@ -195,40 +195,15 @@ export async function getCollectionTrends(
         count: snapshot.data().count,
       });
     } catch {
-      // Index might not exist
-      trends.push({
-        date: dateStart.toISOString().split("T")[0],
-        count: Math.floor(Math.random() * 50) + 10,
-      });
+      // Pas de données disponibles pour cette date (index manquant ou autre erreur)
+      // Ne pas insérer de valeur factice
+      continue;
     }
   }
 
   return trends;
 }
 
-/**
- * Generate mock trend data for demo purposes
- */
-function generateMockTrendData(): TrendDataPoint[] {
-  const trends: TrendDataPoint[] = [];
-  const now = new Date();
-  let baseValue = 100;
-
-  for (let i = 29; i >= 0; i--) {
-    const date = new Date(now);
-    date.setDate(date.getDate() - i);
-
-    // Add some randomness but with an upward trend
-    baseValue = Math.max(50, baseValue + Math.floor(Math.random() * 20) - 8);
-
-    trends.push({
-      date: date.toISOString().split("T")[0],
-      count: baseValue,
-    });
-  }
-
-  return trends;
-}
 
 /**
  * Get recent documents from a collection

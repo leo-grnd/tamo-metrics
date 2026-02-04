@@ -1,6 +1,6 @@
 "use client";
 
-import { use } from "react";
+import { use, useState, useEffect } from "react";
 import { Header } from "@/components/layout/header";
 import { Sidebar } from "@/components/layout/sidebar";
 import { StatCard } from "@/components/ui/stat-card";
@@ -8,13 +8,23 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { LineChart } from "@/components/visualization/charts/line-chart";
 import { AreaChart } from "@/components/visualization/charts/area-chart";
+import { HeatmapChart } from "@/components/visualization/charts/heatmap-chart";
+import { HistogramChart } from "@/components/visualization/charts/histogram-chart";
 import { DataTable } from "@/components/visualization/tables/data-table";
-import { Skeleton } from "@/components/ui/skeleton";
+import { FieldStatsGrid } from "@/components/visualization/field-stats-panel";
+import {
+  Skeleton,
+  TableSkeleton,
+  ChartSkeleton,
+  FieldStatsSkeleton,
+} from "@/components/ui/skeleton";
 import { useCollections } from "@/hooks/use-collections";
 import { useCollectionStats } from "@/hooks/use-collection-stats";
 import { useTrends } from "@/hooks/use-trends";
+import { usePaginatedDocuments } from "@/hooks/use-paginated-documents";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
+import type { FieldStatistics } from "@/lib/analytics/field-stats";
 
 interface CollectionPageProps {
   params: Promise<{ collection: string }>;
@@ -81,10 +91,58 @@ export default function CollectionPage({ params }: CollectionPageProps) {
     stats,
     isLoading: statsLoading,
     isError: statsError,
-  } = useCollectionStats(collectionName, { includeRecent: true, limit: 10 });
+  } = useCollectionStats(collectionName, { includeRecent: true, limit: 20 });
   const { trends, isLoading: trendsLoading } = useTrends(collectionName);
 
+  // Paginated documents for the documents tab
+  const {
+    documents: paginatedDocs,
+    isLoading: docsLoading,
+    isLoadingMore,
+    hasMore,
+    loadMore,
+    total: totalDocs,
+  } = usePaginatedDocuments(collectionName, {
+    pageSize: 25,
+    includeTotal: true,
+  });
+
+  // Field statistics state (loaded on demand)
+  const [fieldStats, setFieldStats] = useState<FieldStatistics[] | null>(null);
+  const [fieldStatsLoading, setFieldStatsLoading] = useState(false);
+  const [activeTab, setActiveTab] = useState("trends");
+
+  // Load field stats when the "fields" tab is activated
+  useEffect(() => {
+    if (activeTab === "fields" && !fieldStats && !fieldStatsLoading) {
+      setFieldStatsLoading(true);
+      fetch(`/api/firestore/collection/${encodeURIComponent(collectionName)}/stats`)
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.fieldStats) {
+            setFieldStats(data.fieldStats);
+          }
+        })
+        .catch(console.error)
+        .finally(() => setFieldStatsLoading(false));
+    }
+  }, [activeTab, collectionName, fieldStats, fieldStatsLoading]);
+
   const isLoading = statsLoading || collectionsLoading;
+
+  // Generate heatmap data from trends
+  const heatmapData =
+    trends?.data?.map((d) => ({
+      date: d.date,
+      value: d.count,
+    })) || [];
+
+  // Extract numeric values for histogram (if any numeric field exists)
+  const numericFieldValues =
+    stats?.recentDocuments
+      ?.flatMap((doc) =>
+        Object.values(doc.data).filter((v): v is number => typeof v === "number")
+      ) || [];
 
   return (
     <div className="min-h-screen bg-zinc-50 dark:bg-black">
@@ -154,39 +212,45 @@ export default function CollectionPage({ params }: CollectionPageProps) {
             <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <StatCard
                 title="Total Documents"
-                value={stats?.documentCount || 0}
+                value={stats?.documentCount}
                 change={stats?.growthPercent}
                 icon={<DocumentIcon />}
                 loading={isLoading}
               />
               <StatCard
                 title="Aujourd'hui"
-                value={stats?.todayCount || 0}
+                value={stats?.todayCount}
                 icon={<TodayIcon />}
                 loading={isLoading}
               />
               <StatCard
                 title="Cette semaine"
-                value={stats?.weekCount || 0}
+                value={stats?.weekCount}
                 icon={<WeekIcon />}
                 loading={isLoading}
               />
               <StatCard
                 title="Croissance"
-                value={stats?.growthPercent || 0}
+                value={stats?.growthPercent !== undefined ? `${stats.growthPercent}%` : null}
                 icon={<GrowthIcon />}
                 loading={isLoading}
               />
             </div>
 
             {/* Tabs */}
-            <Tabs defaultValue="trends" className="w-full">
+            <Tabs
+              defaultValue="trends"
+              className="w-full"
+              onValueChange={setActiveTab}
+            >
               <TabsList>
                 <TabsTrigger value="trends">Tendances</TabsTrigger>
-                <TabsTrigger value="documents">Documents récents</TabsTrigger>
+                <TabsTrigger value="activity">Activité</TabsTrigger>
+                <TabsTrigger value="documents">Documents</TabsTrigger>
                 <TabsTrigger value="fields">Champs</TabsTrigger>
               </TabsList>
 
+              {/* Trends Tab */}
               <TabsContent value="trends">
                 <div className="grid gap-6 lg:grid-cols-2">
                   <Card>
@@ -197,7 +261,7 @@ export default function CollectionPage({ params }: CollectionPageProps) {
                     </CardHeader>
                     <CardContent>
                       {trendsLoading ? (
-                        <Skeleton className="h-[300px] w-full" />
+                        <ChartSkeleton height={300} type="line" />
                       ) : (
                         <LineChart
                           data={trends?.data || []}
@@ -217,7 +281,7 @@ export default function CollectionPage({ params }: CollectionPageProps) {
                     </CardHeader>
                     <CardContent>
                       {trendsLoading ? (
-                        <Skeleton className="h-[300px] w-full" />
+                        <ChartSkeleton height={300} type="line" />
                       ) : (
                         <AreaChart
                           data={trends?.data || []}
@@ -231,54 +295,150 @@ export default function CollectionPage({ params }: CollectionPageProps) {
                 </div>
               </TabsContent>
 
+              {/* Activity Tab */}
+              <TabsContent value="activity">
+                <div className="grid gap-6 lg:grid-cols-2">
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-base">
+                        Répartition par jour/heure
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      {trendsLoading ? (
+                        <Skeleton className="h-[280px] w-full" />
+                      ) : (
+                        <HeatmapChart data={heatmapData} height={280} />
+                      )}
+                    </CardContent>
+                  </Card>
+
+                  {numericFieldValues.length > 10 && (
+                    <Card>
+                      <CardHeader>
+                        <CardTitle className="text-base">
+                          Distribution des valeurs numériques
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        {isLoading ? (
+                          <ChartSkeleton height={300} type="bar" />
+                        ) : (
+                          <HistogramChart
+                            data={numericFieldValues}
+                            bins={15}
+                            showMean
+                            showMedian
+                          />
+                        )}
+                      </CardContent>
+                    </Card>
+                  )}
+                </div>
+              </TabsContent>
+
+              {/* Documents Tab */}
               <TabsContent value="documents">
                 <Card>
                   <CardHeader>
-                    <CardTitle className="text-base">
-                      10 derniers documents
-                    </CardTitle>
+                    <div className="flex items-center justify-between">
+                      <CardTitle className="text-base">
+                        Documents
+                        {totalDocs !== undefined && (
+                          <span className="ml-2 text-sm font-normal text-zinc-500">
+                            ({totalDocs.toLocaleString("fr-FR")} au total)
+                          </span>
+                        )}
+                      </CardTitle>
+                    </div>
                   </CardHeader>
                   <CardContent>
-                    {isLoading ? (
-                      <div className="space-y-2">
-                        {Array.from({ length: 5 }).map((_, i) => (
-                          <Skeleton key={i} className="h-12 w-full" />
-                        ))}
-                      </div>
+                    {docsLoading ? (
+                      <TableSkeleton rows={10} cols={5} />
                     ) : (
-                      <DataTable
-                        documents={stats?.recentDocuments || []}
-                        maxFields={5}
-                      />
+                      <>
+                        <DataTable
+                          documents={paginatedDocs}
+                          maxFields={6}
+                          searchable
+                          exportable
+                          sortable
+                          configurable
+                        />
+                        {hasMore && (
+                          <div className="mt-4 flex justify-center">
+                            <Button
+                              variant="outline"
+                              onClick={loadMore}
+                              disabled={isLoadingMore}
+                            >
+                              {isLoadingMore ? (
+                                <>
+                                  <svg
+                                    className="mr-2 h-4 w-4 animate-spin"
+                                    fill="none"
+                                    viewBox="0 0 24 24"
+                                  >
+                                    <circle
+                                      className="opacity-25"
+                                      cx="12"
+                                      cy="12"
+                                      r="10"
+                                      stroke="currentColor"
+                                      strokeWidth="4"
+                                    />
+                                    <path
+                                      className="opacity-75"
+                                      fill="currentColor"
+                                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                                    />
+                                  </svg>
+                                  Chargement...
+                                </>
+                              ) : (
+                                "Charger plus"
+                              )}
+                            </Button>
+                          </div>
+                        )}
+                      </>
                     )}
                   </CardContent>
                 </Card>
               </TabsContent>
 
+              {/* Fields Tab */}
               <TabsContent value="fields">
                 <Card>
                   <CardHeader>
                     <CardTitle className="text-base">
-                      Champs détectés
+                      Analyse des champs
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
-                    {isLoading ? (
-                      <div className="space-y-2">
-                        {Array.from({ length: 5 }).map((_, i) => (
-                          <Skeleton key={i} className="h-8 w-full" />
+                    {fieldStatsLoading || isLoading ? (
+                      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                        {Array.from({ length: 6 }).map((_, i) => (
+                          <FieldStatsSkeleton key={i} />
                         ))}
                       </div>
+                    ) : fieldStats && fieldStats.length > 0 ? (
+                      <FieldStatsGrid stats={fieldStats} />
                     ) : stats?.sampleFields && stats.sampleFields.length > 0 ? (
-                      <div className="flex flex-wrap gap-2">
-                        {stats.sampleFields.map((field) => (
-                          <span
-                            key={field}
-                            className="inline-flex items-center rounded-full bg-amber-100 px-3 py-1 text-sm font-medium text-amber-800 dark:bg-amber-900/30 dark:text-amber-200"
-                          >
-                            {field}
-                          </span>
-                        ))}
+                      <div className="space-y-4">
+                        <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                          Champs détectés dans cette collection :
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                          {stats.sampleFields.map((field) => (
+                            <span
+                              key={field}
+                              className="inline-flex items-center rounded-full bg-amber-100 px-3 py-1 text-sm font-medium text-amber-800 dark:bg-amber-900/30 dark:text-amber-200"
+                            >
+                              {field}
+                            </span>
+                          ))}
+                        </div>
                       </div>
                     ) : (
                       <p className="text-sm text-zinc-500 dark:text-zinc-400">

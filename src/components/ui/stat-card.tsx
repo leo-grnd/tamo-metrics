@@ -4,8 +4,8 @@ import { Card } from "./card";
 
 interface StatCardProps {
   title: string;
-  value: number;
-  change?: number;
+  value: number | string | null | undefined;
+  change?: number | null;
   icon?: React.ReactNode;
   className?: string;
   loading?: boolean;
@@ -42,9 +42,13 @@ function StatCard({
             {title}
           </p>
           <p className="text-3xl font-bold text-zinc-900 dark:text-zinc-100">
-            {formatCompactNumber(value)}
+            {value !== null && value !== undefined
+              ? typeof value === "number"
+                ? formatCompactNumber(value)
+                : value
+              : "N/A"}
           </p>
-          {change !== undefined && (
+          {change !== undefined && change !== null && (
             <p
               className={cn("text-sm font-medium", {
                 "text-emerald-600 dark:text-emerald-500": change >= 0,

@@ -32,8 +32,8 @@ export function getFieldType(value: unknown): string {
  * Format a field value for display
  */
 export function formatFieldValue(value: unknown, maxLength: number = 50): string {
-  if (value === null) return "null";
-  if (value === undefined) return "undefined";
+  if (value === null) return "N/A";
+  if (value === undefined) return "N/A";
 
   if (Array.isArray(value)) {
     return `[${value.length} items]`;
